@@ -1,0 +1,93 @@
+# =====================================
+# 🧠 GENERAL
+# =====================================
+node_modules/
+dist/
+build/
+.env
+.env.*
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =====================================
+# 🔐 ENVIRONMENT & CONFIG FILES
+# =====================================
+# Local environment and secret files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Supabase secrets
+.supabase
+.supabase/**/config.json
+supabase/.branches/
+supabase/.temp/
+
+# Google OAuth / credentials
+credentials.json
+token.json
+
+# =====================================
+# 🖥️ FRONTEND (React / Next.js / Vite)
+# =====================================
+# React build output
+frontend/build/
+frontend/dist/
+
+# Vite cache
+.vite/
+vite.config.ts.timestamp-*
+
+# Local React environment
+frontend/.env
+frontend/.env.local
+
+# =====================================
+# ⚙️ BACKEND (Node.js / Express)
+# =====================================
+# Compiled JS files if using TypeScript
+backend/dist/
+backend/build/
+
+# Logs
+backend/*.log
+backend/logs/
+logs/
+
+# Local credentials
+backend/.env
+backend/.env.local
+
+# =====================================
+# 🧪 TESTS / TEMP FILES
+# =====================================
+coverage/
+*.lcov
+tmp/
+temp/
+.cache/
+.DS_Store
+Thumbs.db
+
+# =====================================
+# 🐋 DOCKER / DEPLOYMENT
+# =====================================
+.docker/
+docker-compose.override.yml
+*.pid
+*.seed
+*.sqlite
+
+# =====================================
+# 🧩 IDE / EDITOR CONFIG
+# =====================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
