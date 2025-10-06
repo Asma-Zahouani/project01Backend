@@ -11,8 +11,9 @@ import { calendarRouter } from "./routes/calendar.js";
 import { settingsRouter } from "./routes/settings.js";
 import { setupWebSocket } from "./websocket.js";
 import { supabase } from "./supabase.js"; // ✅ Supabase client
-
 dotenv.config();
+
+
 
 const app = express();
 const server = createServer(app);
