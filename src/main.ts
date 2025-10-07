@@ -12,21 +12,49 @@ import { settingsRouter } from "./routes/settings.js";
 import { setupWebSocket } from "./websocket.js";
 import { supabase } from "./supabase.js";
 
-// 🧩 Load environment variables
 dotenv.config();
 
 const app = express();
 const server = createServer(app);
-
-// 🧠 WebSocket setup
 const wss = new WebSocketServer({ server, path: "/ws/progress" });
 setupWebSocket(wss);
 
-// 🌍 Determine environment & frontend origin
+// 🌍 Detect environment
+const isRender = !!process.env.RENDER_EXTERNAL_URL;
+const PORT = Number(process.env.PORT) || 3001;
+
+// 🌐 Define URLs safely
+const PUBLIC_URL =
+  process.env.BACKEND_URL ||
+  (isRender
+    ? process.env.RENDER_EXTERNAL_URL
+    : `http://localhost:${PORT}`);
+
+// ✅ Always fallback to localhost URL if undefined
+const safePublicUrl = PUBLIC_URL || `http://localhost:${PORT}`;
+
+// 🌐 Frontend origin
 const FRONTEND_URL =
-  process.env.FRONTEND_URL || "http://localhost:5173";
-const BACK_WS_URL =
-  process.env.back_WS_URL || `ws://localhost:${process.env.PORT || 3001}/ws/progress`;
+  process.env.FRONTEND_URL ||
+  (isRender
+    ? "https://gmailassistantfront.netlify.app"
+    : "http://localhost:5173");
+
+// ⚡ Compute WebSocket URL safely
+let BACK_WS_URL: string;
+
+if (process.env.BACK_WS_URL) {
+  BACK_WS_URL = process.env.BACK_WS_URL;
+} else if (isRender) {
+  try {
+    const host = new URL(safePublicUrl).hostname;
+    BACK_WS_URL = `wss://${host}/ws/progress`;
+  } catch {
+    BACK_WS_URL = `wss://project01backend.onrender.com/ws/progress`;
+  }
+} else {
+  BACK_WS_URL = `ws://localhost:${PORT}/ws/progress`;
+}
 
 // ⚙️ Middleware
 app.use(
@@ -37,19 +65,19 @@ app.use(
 );
 app.use(express.json());
 
-// 🪵 Simple request logger
-app.use((req, res, next) => {
+// 🪵 Request logger
+app.use((req, _res, next) => {
   console.log(`➡️ ${req.method} ${req.url}`);
   next();
 });
 
-// 📨 Pub/Sub Gmail notifications (logging only)
+// 📨 Pub/Sub Gmail notifications
 app.post("/api/emails/notifications", (req, res, next) => {
   console.log("📨 Pub/Sub notification received:", JSON.stringify(req.body, null, 2));
   next();
 });
 
-// 📚 Routes
+// 🧭 Routes
 app.use("/api/auth", authRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/emails", emailsRouter);
@@ -57,8 +85,8 @@ app.use("/api/calendar", calendarRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/prompts", promptsRouter);
 
-// 🩺 Health check route
-app.get("/health", async (req, res) => {
+// 🩺 Health check
+app.get("/health", async (_req, res) => {
   try {
     const { error } = await supabase.from("users").select("id").limit(1);
     if (error) throw error;
@@ -66,6 +94,7 @@ app.get("/health", async (req, res) => {
     res.json({
       status: "OK",
       supabase: "connected",
+      environment: isRender ? "Render" : "Local",
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
@@ -73,12 +102,13 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// 🧠 LLaMA model test endpoint
-app.get("/api/test-llama", async (req, res) => {
+// 🤖 LLaMA test endpoint
+app.get("/api/test-llama", async (_req, res) => {
   try {
     const { LlamaService } = await import("./services/llama.js");
     const llama = new LlamaService();
     const isAvailable = await llama.isAvailable();
+
     res.json({
       available: isAvailable,
       model: process.env.MODEL,
@@ -90,15 +120,12 @@ app.get("/api/test-llama", async (req, res) => {
 });
 
 // 🚀 Start server
-const PORT = process.env.PORT || 3001;
-const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-
 server.listen(PORT, () => {
+  console.log(isRender ? "🟢 Running on Render environment" : "💻 Running locally");
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 Public backend: ${PUBLIC_URL}`);
-  console.log(`📡 WebSocket endpoint: ${process.env.back_WS_URL}`);
+  console.log(`🌐 Public backend: ${safePublicUrl}`);
+  console.log(`📡 WebSocket endpoint: ${BACK_WS_URL}`);
   console.log(`🤖 LLaMA API URL: ${process.env.LLAMA3_API_URL}`);
   console.log(`🧠 Model: ${process.env.MODEL}`);
   console.log(`🔗 Supabase URL: ${process.env.SUPABASE_URL}`);
 });
-

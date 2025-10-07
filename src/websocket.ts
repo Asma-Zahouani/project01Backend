@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from "ws";
-import { supabase } from "./supabase.js"; // ✅ Add this import to listen to DB changes
+import { supabase } from "./supabase.js"; // ✅ Import Supabase client
 
 interface ProgressMessage {
   userId: string;
@@ -16,13 +16,24 @@ interface ProgressMessage {
   data: any;
 }
 
-// store clients per userId
+// 🧠 Store connected clients per userId
 const clients = new Map<string, Set<WebSocket>>();
 
+/**
+ * 📡 Setup WebSocket + Supabase realtime
+ */
 export function setupWebSocket(wss: WebSocketServer) {
   wss.on("connection", (ws: WebSocket, req) => {
-    const url = new URL(req.url || "", `http://${req.headers.host}`);
-    const userId = url.searchParams.get("userId") || "";
+    let userId = "";
+
+    try {
+      // ✅ Ensure a valid base for URL parsing (Render or localhost)
+      const baseUrl = process.env.RENDER_EXTERNAL_URL || "http://localhost:3001";
+      const url = new URL(req.url || "", baseUrl);
+      userId = url.searchParams.get("userId") || "";
+    } catch (err) {
+      console.warn("⚠️ Failed to parse WS URL:", err);
+    }
 
     if (!userId) {
       console.warn("⚠️ WS rejected: missing userId");
@@ -30,13 +41,15 @@ export function setupWebSocket(wss: WebSocketServer) {
       return;
     }
 
+    // 🧩 Register client
     if (!clients.has(userId)) {
       clients.set(userId, new Set());
     }
     clients.get(userId)!.add(ws);
 
-    console.log(`✅ WS connected [user=${userId}] (clients=${clients.size})`);
+    console.log(`✅ WS connected [user=${userId}] (total clients=${clients.size})`);
 
+    // 🧹 Handle disconnects
     ws.on("close", (code) => {
       clients.get(userId)?.delete(ws);
       if (clients.get(userId)?.size === 0) {
@@ -45,12 +58,13 @@ export function setupWebSocket(wss: WebSocketServer) {
       console.log(`❌ WS closed [user=${userId}, code=${code}]`);
     });
 
+    // 🚨 Handle errors
     ws.on("error", (err) => {
       console.error(`🔥 WS error [user=${userId}]:`, err.message || err);
     });
   });
 
-  // ✅ Listen to Supabase realtime changes on "emails" table
+  // ✅ Listen to Supabase realtime "emails" table inserts
   supabase
     .channel("emails_changes")
     .on(
@@ -58,9 +72,8 @@ export function setupWebSocket(wss: WebSocketServer) {
       { event: "INSERT", schema: "public", table: "emails" },
       (payload) => {
         const newEmail = payload.new;
-        console.log("📩 Detected new email (Supabase realtime):", newEmail);
+        console.log("📩 Supabase Realtime → new email detected:", newEmail);
 
-        // 🔔 Notify all connected WS clients for this user
         const userClients = clients.get(newEmail.user_id);
         if (userClients) {
           userClients.forEach((client) => {
@@ -77,28 +90,32 @@ export function setupWebSocket(wss: WebSocketServer) {
         }
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      console.log(`📡 Supabase Realtime subscription: ${status}`);
+    });
 
   console.log("📡 WebSocket + Supabase realtime listener ready ✅");
 }
 
-// ✅ Reusable manual sender (used by Gmail Push & others)
+/**
+ * 🚀 Send WS message manually (used for AI progress updates, calendar events, etc.)
+ */
 export function sendProgressUpdate(message: ProgressMessage) {
   const userClients = clients.get(message.userId);
 
   if (!userClients || userClients.size === 0) {
-    console.log(`🚫 No WS clients [user=${message.userId}]`);
+    console.log(`🚫 No WS clients connected for user ${message.userId}`);
     return;
   }
 
-  console.log(`📤 WS -> user=${message.userId}, type=${message.type}`);
+  console.log(`📤 WS → user=${message.userId}, type=${message.type}`);
 
   userClients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       try {
         client.send(JSON.stringify(message));
       } catch (err) {
-        console.error("❌ WS send failed:", err);
+        console.error("❌ Failed to send WS message:", err);
       }
     }
   });
