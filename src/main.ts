@@ -90,12 +90,15 @@ app.get("/api/test-llama", async (req, res) => {
 });
 
 // 🚀 Start server
-  const PORT = Number(process.env.PORT) || 3001;
-  server.listen(PORT, "0.0.0.0", () => {
+const PORT = process.env.PORT || 3001;
+const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+
+server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 Public backend: ${process.env.RENDER_EXTERNAL_URL || "http://localhost:" + PORT}`);
-  console.log(`📡 WebSocket endpoint: ${BACK_WS_URL}`);
+  console.log(`🌐 Public backend: ${PUBLIC_URL}`);
+  console.log(`📡 WebSocket endpoint: ${process.env.back_WS_URL}`);
   console.log(`🤖 LLaMA API URL: ${process.env.LLAMA3_API_URL}`);
   console.log(`🧠 Model: ${process.env.MODEL}`);
   console.log(`🔗 Supabase URL: ${process.env.SUPABASE_URL}`);
 });
+
