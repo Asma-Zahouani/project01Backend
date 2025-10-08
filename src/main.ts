@@ -1,8 +1,9 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
+
 import { authRouter } from "./routes/auth.js";
 import { agentsRouter } from "./routes/agents.js";
 import { promptsRouter } from "./routes/prompts.js";
@@ -14,70 +15,61 @@ import { supabase } from "./supabase.js";
 
 dotenv.config();
 
+// ==========================
+// 🌍 Express + WebSocket Setup
+// ==========================
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws/progress" });
-setupWebSocket(wss);
 
-// 🌍 Detect environment
+// ==========================
+// 🔐 Dynamic CORS Configuration
+// ==========================
 const isRender = !!process.env.RENDER_EXTERNAL_URL;
-const PORT = Number(process.env.PORT) || 3001;
-
-// 🌐 Define URLs safely
-const PUBLIC_URL =
-  process.env.BACKEND_URL ||
-  (isRender
-    ? process.env.RENDER_EXTERNAL_URL
-    : `http://localhost:${PORT}`);
-
-// ✅ Always fallback to localhost URL if undefined
-const safePublicUrl = PUBLIC_URL || `http://localhost:${PORT}`;
-
-// 🌐 Frontend origin
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
-  (isRender
-    ? "https://gmailassistantfront.netlify.app"
-    : "http://localhost:5173");
+  (isRender ? "https://gmailassistantfront.netlify.app" : "http://localhost:5173");
 
-// ⚡ Compute WebSocket URL safely
-let BACK_WS_URL: string;
+const allowedOrigins = [
+  FRONTEND_URL,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://gmailassistantfront.netlify.app",
+  "https://project01backend.onrender.com",
+];
 
-if (process.env.BACK_WS_URL) {
-  BACK_WS_URL = process.env.BACK_WS_URL;
-} else if (isRender) {
-  try {
-    const host = new URL(safePublicUrl).hostname;
-    BACK_WS_URL = `wss://${host}/ws/progress`;
-  } catch {
-    BACK_WS_URL = `wss://project01backend.onrender.com/ws/progress`;
-  }
-} else {
-  BACK_WS_URL = `ws://localhost:${PORT}/ws/progress`;
-}
-
-// ⚙️ Middleware
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`🚫 CORS blocked request from: ${origin}`);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
+
 app.use(express.json());
 
-// 🪵 Request logger
-app.use((req, _res, next) => {
+// ==========================
+// 🪵 Request Logger
+// ==========================
+app.use((req: Request, _res: Response, next: NextFunction) => {
   console.log(`➡️ ${req.method} ${req.url}`);
   next();
 });
 
-// 📨 Pub/Sub Gmail notifications
-app.post("/api/emails/notifications", (req, res, next) => {
-  console.log("📨 Pub/Sub notification received:", JSON.stringify(req.body, null, 2));
-  next();
-});
+// ==========================
+// 🔌 WebSocket Setup
+// ==========================
+setupWebSocket(wss);
 
-// 🧭 Routes
+// ==========================
+// 🧩 API Routes
+// ==========================
 app.use("/api/auth", authRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/emails", emailsRouter);
@@ -85,8 +77,16 @@ app.use("/api/calendar", calendarRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/prompts", promptsRouter);
 
-// 🩺 Health check
-app.get("/health", async (_req, res) => {
+// ✅ Gmail Pub/Sub notifications (debug)
+app.post("/api/emails/notifications", (req: Request, res: Response, next: NextFunction) => {
+  console.log("📨 Pub/Sub notification received:", JSON.stringify(req.body, null, 2));
+  next();
+});
+
+// ==========================
+// ❤️ Health Check
+// ==========================
+app.get("/health", async (_req: Request, res: Response) => {
   try {
     const { error } = await supabase.from("users").select("id").limit(1);
     if (error) throw error;
@@ -94,16 +94,18 @@ app.get("/health", async (_req, res) => {
     res.json({
       status: "OK",
       supabase: "connected",
-      environment: isRender ? "Render" : "Local",
       timestamp: new Date().toISOString(),
+      environment: isRender ? "Render" : "Local",
     });
   } catch (err: any) {
     res.status(500).json({ status: "ERROR", supabase: err.message });
   }
 });
 
-// 🤖 LLaMA test endpoint
-app.get("/api/test-llama", async (_req, res) => {
+// ==========================
+// 🧠 Test LLaMA Endpoint
+// ==========================
+app.get("/api/test-llama", async (_req: Request, res: Response) => {
   try {
     const { LlamaService } = await import("./services/llama.js");
     const llama = new LlamaService();
@@ -119,13 +121,19 @@ app.get("/api/test-llama", async (_req, res) => {
   }
 });
 
-// 🚀 Start server
+// ==========================
+// 🚀 Start Server
+// ==========================
+const PORT = Number(process.env.PORT) || 3001;
+const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+const wsUrl = baseUrl.replace(/^http/, "ws") + "/ws/progress";
+
 server.listen(PORT, () => {
-  console.log(isRender ? "🟢 Running on Render environment" : "💻 Running locally");
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 Public backend: ${safePublicUrl}`);
-  console.log(`📡 WebSocket endpoint: ${BACK_WS_URL}`);
+  console.log("\n✅ BACKEND READY");
+  console.log(`🚀 HTTP Server: ${baseUrl}`);
+  console.log(`📡 WebSocket: ${wsUrl}`);
   console.log(`🤖 LLaMA API URL: ${process.env.LLAMA3_API_URL}`);
   console.log(`🧠 Model: ${process.env.MODEL}`);
   console.log(`🔗 Supabase URL: ${process.env.SUPABASE_URL}`);
+  console.log("🌍 Allowed Origins:", allowedOrigins);
 });

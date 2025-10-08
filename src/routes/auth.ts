@@ -14,23 +14,28 @@ const router = express.Router();
 function getOAuthClient() {
   if (
     !process.env.GOOGLE_CLIENT_ID ||
-    !process.env.GOOGLE_CLIENT_SECRET ||
-    !process.env.GOOGLE_REDIRECT_URI
+    !process.env.GOOGLE_CLIENT_SECRET
   ) {
     throw new Error("❌ Missing Google OAuth environment variables");
   }
 
+  // Pick redirect URI dynamically
+  const redirectUri =
+    process.env.RENDER_EXTERNAL_URL
+      ? `${process.env.RENDER_EXTERNAL_URL}/api/auth/google/callback`
+      : "http://localhost:3001/api/auth/google/callback";
+
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
+    redirectUri
   );
 }
 
 // ==========================
 // 1. Generate Google OAuth URL
 // ==========================
-router.get("/google", (req, res) => {
+router.get("/google", (_req, res) => {
   try {
     const oauth2Client = getOAuthClient();
 
@@ -40,7 +45,7 @@ router.get("/google", (req, res) => {
       "https://www.googleapis.com/auth/calendar",
       "https://www.googleapis.com/auth/calendar.events",
       "https://www.googleapis.com/auth/userinfo.email",
-      "https://www.googleapis.com/auth/userinfo.profile", // ✅ get full name
+      "https://www.googleapis.com/auth/userinfo.profile",
     ];
 
     const url = oauth2Client.generateAuthUrl({
@@ -61,7 +66,9 @@ router.get("/google", (req, res) => {
 // ==========================
 router.get("/google/callback", async (req, res) => {
   try {
-    const code = req.query.code as string;
+    // ✅ Safely cast and validate the authorization code
+    const code = typeof req.query.code === "string" ? req.query.code : null;
+
     if (!code) {
       return res.status(400).send(`
         <script>
@@ -75,33 +82,38 @@ router.get("/google/callback", async (req, res) => {
     }
 
     const oauth2Client = getOAuthClient();
-    const { tokens } = await oauth2Client.getToken(code);
+
+    // ✅ Properly get the tokens and destructure them safely
+    const tokenResponse = await oauth2Client.getToken({ code });
+    const tokens = tokenResponse.tokens;
     oauth2Client.setCredentials(tokens);
 
-    // Fetch Google user info (includes full name)
+    // ✅ Fetch Google user info
     const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
     const email = userInfo.data.email;
-    const full_name = userInfo.data.name || null; // ✅ new field
+    const full_name = userInfo.data.name || null;
 
     if (!email) {
       throw new Error("❌ Failed to fetch Google account email");
     }
 
-    // Retrieve or create user in Supabase
+    // ✅ Retrieve or create user in Supabase
     let { data: user, error: userError } = await supabase
       .from("users")
       .select("*")
       .eq("email", email)
       .single();
 
+    if (userError && userError.code !== "PGRST116") {
+      throw userError;
+    }
+
     if (!user) {
-      // New user → insert
+      // 🆕 New user → insert
       const { data: newUser, error: insertError } = await supabase
         .from("users")
-        .insert({
-          email,
-          full_name,       })
+        .insert({ email, full_name })
         .select()
         .single();
 
@@ -124,7 +136,7 @@ router.get("/google/callback", async (req, res) => {
 
       console.log(`✅ New user created: ${email} (${full_name})`);
     } else {
-      // Existing user → merge tokens + update name
+      // 🔄 Existing user → merge tokens + update name
       const storedTokens = JSON.parse(user.google_token || "{}");
       const mergedTokens = {
         ...storedTokens,
@@ -145,18 +157,18 @@ router.get("/google/callback", async (req, res) => {
       console.log(`🔄 Updated tokens for user: ${email}`);
     }
 
-    // Generate JWT
+    // ✅ Generate JWT
     if (!process.env.JWT_SECRET) {
       throw new Error("❌ JWT_SECRET is missing from environment variables");
     }
 
     const jwtToken = jwt.sign(
-      { userId: user.id, email, full_name: user.full_name, },
+      { userId: user.id, email, full_name: user.full_name },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // ✅ Send HTML back to frontend
+    // ✅ Return HTML to frontend
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -169,7 +181,8 @@ router.get("/google/callback", async (req, res) => {
                 user: { 
                   id: "${user.id}", 
                   email: "${email}", 
-                  full_name: "${user.full_name || full_name}",                 } 
+                  full_name: "${user.full_name || full_name}" 
+                } 
               },
               "${process.env.FRONTEND_URL || "http://localhost:5173"}"
             );
@@ -178,8 +191,8 @@ router.get("/google/callback", async (req, res) => {
         </body>
       </html>
     `);
-  } catch (error) {
-    console.error("❌ Auth callback error:", error);
+  } catch (error: any) {
+    console.error("❌ Auth callback error:", error.message);
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -187,7 +200,7 @@ router.get("/google/callback", async (req, res) => {
         <body>
           <script>
             window.opener.postMessage(
-              { error: "Authentication failed" },
+              { error: "Authentication failed: ${error.message}" },
               "${process.env.FRONTEND_URL || "http://localhost:5173"}"
             );
             window.close();
@@ -198,59 +211,21 @@ router.get("/google/callback", async (req, res) => {
   }
 });
 
+
 // ==========================
 // 3. JWT Verification Middleware
 // ==========================
 export function authenticateToken(req: any, res: any, next: any) {
   const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-
+  const token = authHeader?.split(" ")[1];
   if (!token) return res.sendStatus(401);
 
-  if (!process.env.JWT_SECRET) {
-    console.error("❌ JWT_SECRET is missing in environment variables");
-    return res.sendStatus(500);
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET, (err: any, decoded: any) => {
+  const jwtSecret = process.env.JWT_SECRET || "defaultsecret";
+  jwt.verify(token, jwtSecret, (err: any, decoded: any) => {
     if (err) return res.sendStatus(403);
     req.user = decoded;
     next();
   });
 }
-
-// ==========================
-// 4. Debug route to generate JWT manually
-// ==========================
-router.get("/debug-jwt", async (req, res) => {
-  try {
-    const email =
-      (req.query.email as string) || "asma17402@gmail.com";
-    const { data: user } = await supabase
-      .from("users")
-      .select("*")
-      .eq("email", email)
-      .single();
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        full_name: user.full_name,
-      },
-      process.env.JWT_SECRET!,
-      { expiresIn: "7d" }
-    );
-
-    res.json({ token, user });
-  } catch (err: any) {
-    console.error("❌ Debug JWT error:", err.message);
-    res.status(500).json({ error: "Failed to generate debug JWT" });
-  }
-});
 
 export { router as authRouter };
