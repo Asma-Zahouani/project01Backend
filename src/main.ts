@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
+import path from "path";
 import dotenv from "dotenv";
 
 import { authRouter } from "./routes/auth.js";
@@ -13,7 +14,8 @@ import { settingsRouter } from "./routes/settings.js";
 import { setupWebSocket } from "./websocket.js";
 import { supabase } from "./supabase.js";
 
-dotenv.config();
+// ✅ Always load .env from the project root
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 // ==========================
 // 🌍 Express + WebSocket Setup
@@ -32,8 +34,7 @@ const FRONTEND_URL =
 
 const allowedOrigins = [
   FRONTEND_URL,
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
+  "http://localhost:3001",
   "https://gmailassistantfront.netlify.app",
   "https://project01backend.onrender.com",
 ];
